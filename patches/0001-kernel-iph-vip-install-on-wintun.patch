@@ -1,0 +1,117 @@
+--- a/src/libcharon/plugins/kernel_iph/kernel_iph_net.c
++++ b/src/libcharon/plugins/kernel_iph/kernel_iph_net.c
+@@ -609,18 +609,87 @@ METHOD(kernel_net_t, get_nexthop, host_t*,
+ 	return NULL;
+ }
+
++/**
++ * Fill a SOCKADDR_INET from a strongSwan host_t.
++ */
++static void host2sockaddr_inet(host_t *h, SOCKADDR_INET *sa)
++{
++	chunk_t addr = h->get_address(h);
++
++	memset(sa, 0, sizeof(*sa));
++	if (h->get_family(h) == AF_INET && addr.len == 4)
++	{
++		sa->Ipv4.sin_family = AF_INET;
++		memcpy(&sa->Ipv4.sin_addr, addr.ptr, 4);
++	}
++	else if (h->get_family(h) == AF_INET6 && addr.len == 16)
++	{
++		sa->Ipv6.sin6_family = AF_INET6;
++		memcpy(&sa->Ipv6.sin6_addr, addr.ptr, 16);
++	}
++}
++
+ METHOD(kernel_net_t, add_ip, status_t,
+ 	private_kernel_iph_net_t *this, host_t *virtual_ip, int prefix,
+ 	char *iface_name)
+ {
+-	return NOT_SUPPORTED;
++	NET_LUID *luid = lib->get(lib, "kernel-wintun-luid");
++	MIB_UNICASTIPADDRESS_ROW row;
++	DWORD r;
++
++	/* No Wintun adapter exposed by kernel-wintun plugin -> behave as
++	 * the original stub (charon will skip VIP install). */
++	if (!luid)
++	{
++		return NOT_SUPPORTED;
++	}
++
++	InitializeUnicastIpAddressEntry(&row);
++	row.InterfaceLuid = *luid;
++	host2sockaddr_inet(virtual_ip, &row.Address);
++	row.OnLinkPrefixLength = prefix;
++	row.DadState = IpDadStatePreferred;
++
++	r = CreateUnicastIpAddressEntry(&row);
++	if (r != NO_ERROR)
++	{
++		DBG1(DBG_KNL, "CreateUnicastIpAddressEntry(%H/%d) failed: %lu",
++			 virtual_ip, prefix, r);
++		return FAILED;
++	}
++	DBG1(DBG_KNL, "installed VIP %H/%d on kernel-wintun adapter",
++		 virtual_ip, prefix);
++	return SUCCESS;
+ }
+
+ METHOD(kernel_net_t, del_ip, status_t,
+ 	private_kernel_iph_net_t *this, host_t *virtual_ip, int prefix,
+ 	bool wait)
+ {
+-	return NOT_SUPPORTED;
++	NET_LUID *luid = lib->get(lib, "kernel-wintun-luid");
++	MIB_UNICASTIPADDRESS_ROW row;
++	DWORD r;
++
++	if (!luid)
++	{
++		return NOT_SUPPORTED;
++	}
++
++	InitializeUnicastIpAddressEntry(&row);
++	row.InterfaceLuid = *luid;
++	host2sockaddr_inet(virtual_ip, &row.Address);
++	row.OnLinkPrefixLength = prefix;
++
++	r = DeleteUnicastIpAddressEntry(&row);
++	if (r != NO_ERROR)
++	{
++		DBG1(DBG_KNL, "DeleteUnicastIpAddressEntry(%H/%d) failed: %lu",
++			 virtual_ip, prefix, r);
++		return FAILED;
++	}
++	DBG1(DBG_KNL, "removed VIP %H/%d from kernel-wintun adapter",
++		 virtual_ip, prefix);
++	return SUCCESS;
+ }
+
+ /**
+@@ -656,6 +725,24 @@ static status_t manage_route(private_kernel_iph_net_t *this, bool add,
+ 	enumerator->destroy(enumerator);
+ 	this->mutex->unlock(this->mutex);
+
++	/* Fallback: callers (notably kernel-wintun) reference the adapter by its
++	 * Windows FriendlyName, while our table is keyed on AdapterName (GUID).
++	 * Resolve via Win32 alias->LUID->ifindex lookup before giving up. */
++	if (!row.InterfaceIndex)
++	{
++		WCHAR aliasW[IF_MAX_STRING_SIZE + 1] = { 0 };
++		NET_LUID luid;
++		NET_IFINDEX idx = 0;
++
++		if (MultiByteToWideChar(CP_UTF8, 0, name, -1, aliasW,
++								IF_MAX_STRING_SIZE) > 0 &&
++			ConvertInterfaceAliasToLuid(aliasW, &luid) == NO_ERROR &&
++			ConvertInterfaceLuidToIndex(&luid, &idx) == NO_ERROR)
++		{
++			row.InterfaceIndex = idx;
++		}
++	}
++
+ 	if (!row.InterfaceIndex)
+ 	{
+ 		return NOT_FOUND;

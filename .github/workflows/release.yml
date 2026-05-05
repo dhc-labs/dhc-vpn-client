@@ -1,0 +1,179 @@
+name: release
+
+# Triggers on a pushed tag matching `v*` (e.g. v0.1.0, v0.1.0-rc1).
+# Builds the same artifacts as build.yml, submits them to SignPath for
+# Authenticode signing, and publishes a GitHub Release with the signed
+# ZIP attached.
+#
+# Required GitHub repository secrets (set under Settings -> Secrets and
+# variables -> Actions):
+#
+#   SIGNPATH_API_TOKEN          -- SignPath CI user API token.
+#   SIGNPATH_ORGANIZATION_ID    -- SignPath organization UUID.
+#
+# Required SignPath project setup:
+#
+#   - Project slug:                 dhc-vpn-client
+#   - Artifact configuration slug:  zip-default
+#   - Signing policy slug:          release-signing
+#
+# These values can be edited below if you choose different slugs in the
+# SignPath UI.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write       # required for softprops/action-gh-release
+
+defaults:
+  run:
+    shell: msys2 {0}
+
+jobs:
+  build-and-sign:
+    name: build + sign + release
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            git
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-qt6-svg
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-gmp
+            autoconf
+            automake
+            libtool
+            bison
+            flex
+            gperf
+            gettext-devel
+            unzip
+
+      - name: Cache third_party
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: third_party-${{ runner.os }}-${{ hashFiles('scripts/fetch-deps.sh') }}
+
+      - name: Fetch external dependencies
+        run: ./scripts/fetch-deps.sh
+
+      - name: Build charon-svc
+        run: ./scripts/build-charon.sh
+
+      - name: CMake configure
+        run: cmake -S . -B build -G "MinGW Makefiles"
+
+      - name: CMake build
+        run: cmake --build build --parallel
+
+      - name: Resolve release version
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = '${{ github.event.inputs.tag }}'
+          if (-not $tag) { $tag = '${{ github.ref_name }}' }
+          $version = $tag -replace '^v',''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=$tag"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Package unsigned ZIP
+        shell: pwsh
+        run: ./scripts/package.ps1 -Version '${{ steps.ver.outputs.version }}'
+
+      - name: Build unsigned MSI
+        shell: pwsh
+        run: ./scripts/build-msi.ps1 -Version '${{ steps.ver.outputs.version }}'
+
+      - name: Upload unsigned ZIP for SignPath
+        id: upload-unsigned-zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: dhc-vpn-unsigned-zip
+          path: build/dhc-vpn-${{ steps.ver.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload unsigned MSI for SignPath
+        id: upload-unsigned-msi
+        uses: actions/upload-artifact@v4
+        with:
+          name: dhc-vpn-unsigned-msi
+          path: build/dhc-vpn-${{ steps.ver.outputs.version }}.msi
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Submit ZIP to SignPath
+        id: signpath-zip
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: 'dhc-vpn-client'
+          signing-policy-slug: 'release-signing'
+          artifact-configuration-slug: 'zip-default'
+          github-artifact-id: ${{ steps.upload-unsigned-zip.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: 'build/signed'
+
+      - name: Submit MSI to SignPath
+        id: signpath-msi
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: 'dhc-vpn-client'
+          signing-policy-slug: 'release-signing'
+          artifact-configuration-slug: 'msi-default'
+          github-artifact-id: ${{ steps.upload-unsigned-msi.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: 'build/signed'
+
+      - name: Compute signed-artifact SHA256s
+        shell: pwsh
+        run: |
+          foreach ($pat in 'dhc-vpn-*.zip','dhc-vpn-*.msi') {
+              $f = Get-ChildItem "build/signed/$pat" | Select-Object -First 1
+              if (-not $f) { throw "signed artifact not found for pattern $pat" }
+              $hash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash
+              "$hash *$($f.Name)" | Set-Content "$($f.FullName).sha256" -Encoding ASCII
+              Write-Host "Signed: $($f.FullName)"
+              Write-Host "SHA256: $hash"
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            build/signed/dhc-vpn-*.zip
+            build/signed/dhc-vpn-*.zip.sha256
+            build/signed/dhc-vpn-*.msi
+            build/signed/dhc-vpn-*.msi.sha256

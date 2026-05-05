@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  dhc-vpn-client MSI installer (WiX v4).
+
+  Inputs (passed via -d on the wix command line):
+    ProductVersion       4-part numeric version, e.g. 0.1.0.0
+    StagingDir           Absolute path to the staging tree produced by
+                         scripts/package.ps1 (build/dhc-vpn-<version>/);
+                         used as Source for explicit <File> components
+                         (charon-svc.exe, dhc-vpn.exe).
+    BulkDir              Absolute path to a *cleaned* copy of StagingDir
+                         with the explicit-component files removed so
+                         the <Files> bulk harvest does not double-install
+                         them. build-msi.ps1 prepares this directory.
+    InstallerAssetsDir   Path to installer/ in the repo (this directory
+                         contains swanctl.conf and strongswan.conf
+                         shipped alongside the harvested staging tree)
+
+  This installer mirrors scripts/install.ps1, with one limitation
+  documented inline: install.ps1's strongswan.conf is generated at
+  install time so the log path can match -DataDir; the MSI ships a
+  pre-generated strongswan.conf with %ProgramData% hard-coded as
+  C:/ProgramData/dhc-vpn/logs/charon.log. End-users on non-default
+  ProgramData paths (rare) need to edit the file manually.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <Package
+    Name="dhc-vpn"
+    Manufacturer="Dr. Herbert Consult GmbH"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="0A8C5F3E-7D4B-4E1F-9A6C-2B8E4D1F6A9C"
+    Compressed="yes"
+    Scope="perMachine"
+    InstallerVersion="500">
+
+    <SummaryInformation Description="dhc-vpn-client (Open-source IKEv2 VPN client for Windows)"/>
+    <MediaTemplate EmbedCab="yes"/>
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."/>
+
+    <Property Id="ARPHELPLINK"     Value="https://github.com/dhc-labs/dhc-vpn-client"/>
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/dhc-labs/dhc-vpn-client"/>
+    <Property Id="ARPCONTACT"      Value="Dr. Herbert Consult GmbH"/>
+
+    <!--
+      Directory layout. ProgramFiles64Folder holds the read-only product
+      tree; CommonAppDataFolder (C:\ProgramData\) holds per-machine user
+      data (certs, profiles, logs) preserved across upgrades.
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLDIR" Name="dhc-vpn">
+        <Directory Id="BinDir"  Name="bin"/>
+        <Directory Id="SbinDir" Name="sbin"/>
+        <Directory Id="EtcDir"  Name="etc"/>
+        <Directory Id="GuiDir"  Name="gui"/>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DataDir" Name="dhc-vpn">
+        <Directory Id="DataSwanctlDir" Name="swanctl">
+          <Directory Id="DataX509"     Name="x509"/>
+          <Directory Id="DataX509Ca"   Name="x509ca"/>
+          <Directory Id="DataPrivate"  Name="private"/>
+          <Directory Id="DataConfD"    Name="conf.d"/>
+          <Directory Id="DataSecretsD" Name="secrets.d"/>
+        </Directory>
+        <Directory Id="DataLogsDir" Name="logs"/>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="dhc-vpn" Level="1">
+
+      <!--
+        Bulk-harvest the bin/ sbin/ etc/ gui/ subtrees from the cleaned
+        BulkDir staging tree. WiX v5's <Files> has no Exclude attribute,
+        so build-msi.ps1 prepares BulkDir as StagingDir minus the two
+        files we declare explicitly below (charon-svc.exe, dhc-vpn.exe).
+      -->
+      <Files Include="$(var.BulkDir)\bin\**"  Directory="BinDir"/>
+      <Files Include="$(var.BulkDir)\sbin\**" Directory="SbinDir"/>
+      <Files Include="$(var.BulkDir)\etc\**"  Directory="EtcDir"/>
+      <Files Include="$(var.BulkDir)\gui\**"  Directory="GuiDir"/>
+
+      <!--
+        charon-svc.exe + Windows Service registration + IKE firewall
+        rules. The service runs as LocalSystem (required for Wintun
+        adapter creation and routing-table edits).
+      -->
+      <Component Id="CharonSvcComp" Directory="BinDir">
+        <File Source="$(var.StagingDir)\bin\charon-svc.exe" KeyPath="yes"/>
+        <ServiceInstall Id="CharonSvc"
+                        Name="charon-svc"
+                        DisplayName="dhc-vpn (charon)"
+                        Description="strongSwan IKEv2 daemon for dhc-vpn (Wintun + WinDivert backend)."
+                        Type="ownProcess"
+                        Start="demand"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Vital="yes"/>
+        <ServiceControl Id="CharonSvcCtrl"
+                        Name="charon-svc"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes"/>
+        <fw:FirewallException Id="IkeUdp500"
+                              Name="dhc-vpn IKE UDP/500"
+                              Port="500"
+                              Protocol="udp"
+                              Profile="all"
+                              Scope="any"/>
+        <fw:FirewallException Id="IkeUdp4500"
+                              Name="dhc-vpn IKE UDP/4500"
+                              Port="4500"
+                              Protocol="udp"
+                              Profile="all"
+                              Scope="any"/>
+      </Component>
+
+      <!--
+        Service-scoped environment vars so charon-svc reads its config
+        from %ProgramFiles%\dhc-vpn\etc\ and its swanctl tree from
+        %ProgramData%\dhc-vpn\swanctl\. MSI properties in Value get
+        substituted at install time.
+      -->
+      <Component Id="CharonSvcEnv" Directory="BinDir">
+        <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\charon-svc">
+          <RegistryValue Name="Environment" Type="multiString" KeyPath="yes">
+            <MultiStringValue Value="STRONGSWAN_CONF=[INSTALLDIR]etc\strongswan.conf"/>
+            <MultiStringValue Value="SWANCTL_DIR=[CommonAppDataFolder]dhc-vpn\swanctl"/>
+          </RegistryValue>
+        </RegistryKey>
+      </Component>
+
+      <!--
+        dhc-vpn.exe + Start-Menu shortcut.
+      -->
+      <Component Id="DhcVpnGuiComp" Directory="GuiDir">
+        <File Id="DhcVpnGuiExe"
+              Source="$(var.StagingDir)\gui\dhc-vpn.exe"
+              KeyPath="yes">
+          <Shortcut Id="DhcVpnStartMenuShortcut"
+                    Directory="ProgramMenuFolder"
+                    Name="dhc-vpn"
+                    Description="dhc-vpn (IKEv2 client)"
+                    WorkingDirectory="GuiDir"
+                    Advertise="no"/>
+        </File>
+      </Component>
+
+      <!--
+        ProgramData empty subdirs. Each carries a stable HKLM keypath
+        so MSI can track presence; on uninstall the folders are removed
+        only if empty (user cert/profile files survive).
+      -->
+      <Component Id="DataX509Folder" Directory="DataX509">
+        <CreateFolder/>
+        <RegistryValue Root="HKLM" Key="Software\dhc-vpn\Folders" Name="x509"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+      <Component Id="DataX509CaFolder" Directory="DataX509Ca">
+        <CreateFolder/>
+        <RegistryValue Root="HKLM" Key="Software\dhc-vpn\Folders" Name="x509ca"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+      <Component Id="DataPrivateFolder" Directory="DataPrivate">
+        <CreateFolder/>
+        <RegistryValue Root="HKLM" Key="Software\dhc-vpn\Folders" Name="private"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+      <Component Id="DataConfDFolder" Directory="DataConfD">
+        <CreateFolder/>
+        <RegistryValue Root="HKLM" Key="Software\dhc-vpn\Folders" Name="confD"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+      <Component Id="DataSecretsDFolder" Directory="DataSecretsD">
+        <CreateFolder/>
+        <RegistryValue Root="HKLM" Key="Software\dhc-vpn\Folders" Name="secretsD"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+      <Component Id="DataLogsFolder" Directory="DataLogsDir">
+        <CreateFolder/>
+        <RegistryValue Root="HKLM" Key="Software\dhc-vpn\Folders" Name="logs"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+
+      <!--
+        Default swanctl.conf in %ProgramData%\dhc-vpn\swanctl\. Installed
+        only when the file does not yet exist (NeverOverwrite="yes") so
+        a re-install or upgrade preserves user edits.
+      -->
+      <Component Id="DefaultSwanctlConf" Directory="DataSwanctlDir" NeverOverwrite="yes">
+        <File Id="SwanctlConf"
+              Name="swanctl.conf"
+              Source="$(var.InstallerAssetsDir)\swanctl.conf"
+              KeyPath="yes"/>
+      </Component>
+
+    </Feature>
+
+    <!--
+      Loosen the charon-svc service ACL so any logged-in user can
+      start/stop it. Without this, the unelevated GUI cannot spin up
+      the daemon on Connect (default Windows ACL grants START/STOP to
+      admins only).
+
+      Trade-off: any local user can stop the VPN. Acceptable for a
+      single-user laptop client; would be wrong for a multi-tenant
+      server.
+
+      Implementation: deferred CustomAction running sc.exe sdset with
+      a known full SDDL that includes the (A;;CCLCSWLOCRRPWP;;;AU)
+      ACE. Properties resolved via SetProperty before the deferred
+      action runs.
+    -->
+    <SetProperty Id="GrantSvcStart"
+                 Value='[SystemFolder]sc.exe sdset charon-svc &quot;D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;CCLCSWLOCRRPWP;;;AU)&quot;'
+                 Sequence="execute"
+                 Before="GrantSvcStart"/>
+    <CustomAction Id="GrantSvcStart"
+                  DllEntry="WixQuietExec"
+                  BinaryRef="Wix4UtilCA_X64"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check"/>
+    <InstallExecuteSequence>
+      <Custom Action="GrantSvcStart" After="StartServices" Condition="NOT REMOVE"/>
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>

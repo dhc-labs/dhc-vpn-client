@@ -1,0 +1,69 @@
+# Build artifacts
+build/
+build-*/
+out/
+cmake-build-*/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake.in.user
+
+# Qt
+*.pro.user
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qmlc
+
+# Compiler
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Vendored sources / binaries (recreated by scripts/fetch-deps.sh)
+third_party/strongswan/
+third_party/wintun/
+third_party/windivert/
+
+# Local logs / configs
+*.log
+local.conf
+*.local
+
+# Customer / lab device configs (PSKs, secrets, internal addressing)
+isr4451-config*
+*-cisco-config*
+cisco-*.txt
+cisco-*.cfg
+
+# Packet captures
+*.pcap
+*.pcapng
+*.etl
+
+# Claude Code local workspace state
+.claude/
