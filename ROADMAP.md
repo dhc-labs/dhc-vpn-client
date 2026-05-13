@@ -180,10 +180,14 @@ Scope:
   - MajorUpgrade für Drop-in-Updates ohne Vor-Uninstall
   - Wintun- und WinDivert-Treiber bleiben User-Space-installed
     bei erstem Daemon-Start (kein Treiber-Installer nötig)
-- Code-Signing (✅ workflow scaffold) — `release.yml` reicht ZIP
-  und MSI an SignPath OSS weiter, ergebende Authenticode-signierte
-  Artefakte werden an einen GitHub-Release-Draft gehängt.
-  SignPath-Anwendung läuft separat (siehe ROADMAP-Notes).
+- Code-Signing (⚠ aktuell unsigned) — SignPath-OSS-Bewerbung wurde
+  am 2026-05-13 wegen fehlender Public-Visibility-Signale abgelehnt.
+  `release.yml` hängt aktuell unsigned ZIP + MSI plus SHA256-Sidecars
+  an einen GitHub-Release-Draft; SmartScreen-Warnung ist erwartet und
+  in `README.md` / `docs/USER_GUIDE.md` für End-User dokumentiert.
+  Mittelfristig: Migration auf Azure Trusted Signing oder erneute
+  SignPath-Foundation-Bewerbung, sobald das Projekt mehr externe
+  Sichtbarkeit hat.
 
 ### Offen
 

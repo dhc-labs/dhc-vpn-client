@@ -36,6 +36,9 @@ DPAPI-geschütztes EAP-Passwort.
 
 Details zur Reise siehe [`docs/history.md`](docs/history.md).
 
+End-User-Anleitung (Installation, Profilanlage, Cert-/EAP-Setup,
+Troubleshooting): [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md).
+
 ## Motivation
 
 Windows-RAS-IKEv2 spricht mit vielen Cisco-Gegenstellen praktisch nicht —
@@ -96,8 +99,7 @@ Volle Beschreibung: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 ## Installation
 
 Fertige Builds liegen unter
-[GitHub Releases](https://github.com/dhc-labs/dhc-vpn-client/releases) —
-Authenticode-signiert via SignPath OSS:
+[GitHub Releases](https://github.com/dhc-labs/dhc-vpn-client/releases):
 
 - `dhc-vpn-<ver>.msi` — empfohlene End-User-Installation. Doppelklick,
   UAC, Start-Menü-Eintrag, registriert `charon-svc` als Windows-Dienst,
@@ -109,6 +111,29 @@ Beides legt das Programm unter `%ProgramFiles%\dhc-vpn\` und Benutzer-
 daten (Profile, Zertifikate, Logs) unter `%ProgramData%\dhc-vpn\` ab.
 Deinstallation via *Apps & Features* (MSI) oder
 `scripts/uninstall.ps1` (ZIP).
+
+### Hinweis zur Code-Signatur
+
+Die Builds sind aktuell **nicht Authenticode-signiert**. Bei Erst-
+ausführung zeigt Windows SmartScreen daher eine Warnung
+(„Windows hat den Start dieser App verhindert") und/oder Microsoft
+Defender meldet den Download.
+
+**Das ist erwartetes Verhalten** für einen jungen Open-Source-Build
+ohne etablierte Reputation. So gehst du vor:
+
+1. SHA256-Summe der heruntergeladenen Datei prüfen — die Datei
+   `dhc-vpn-<version>.msi.sha256` (bzw. `.zip.sha256`) neben dem
+   Release-Asset enthält den erwarteten Hash. PowerShell:
+   ```powershell
+   Get-FileHash .\dhc-vpn-<ver>.msi -Algorithm SHA256
+   ```
+2. Im SmartScreen-Dialog auf **Weitere Informationen** → **Trotzdem
+   ausführen** klicken.
+
+Mittelfristig planen wir Authenticode-Signing über Azure Trusted
+Signing oder eine erneute SignPath-Foundation-Bewerbung, sobald das
+Projekt mehr externe Sichtbarkeit hat.
 
 ## Build
 

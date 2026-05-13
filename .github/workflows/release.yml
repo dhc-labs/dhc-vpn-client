@@ -1,24 +1,15 @@
 name: release
 
 # Triggers on a pushed tag matching `v*` (e.g. v0.1.0, v0.1.0-rc1).
-# Builds the same artifacts as build.yml, submits them to SignPath for
-# Authenticode signing, and publishes a GitHub Release with the signed
-# ZIP attached.
+# Builds ZIP and MSI artifacts and publishes them as a GitHub Release draft.
 #
-# Required GitHub repository secrets (set under Settings -> Secrets and
-# variables -> Actions):
-#
-#   SIGNPATH_API_TOKEN          -- SignPath CI user API token.
-#   SIGNPATH_ORGANIZATION_ID    -- SignPath organization UUID.
-#
-# Required SignPath project setup:
-#
-#   - Project slug:                 dhc-vpn-client
-#   - Artifact configuration slug:  zip-default
-#   - Signing policy slug:          release-signing
-#
-# These values can be edited below if you choose different slugs in the
-# SignPath UI.
+# Artifacts are currently NOT Authenticode-signed. The SignPath OSS
+# application was declined for lack of public-visibility signals; until
+# we either (a) re-apply once the project has more traction or (b)
+# move to Azure Trusted Signing, releases ship unsigned and users see
+# a Windows SmartScreen warning on first run. See README.md
+# (`Hinweis zur Code-Signatur`) and docs/USER_GUIDE.md for end-user
+# instructions on verifying the SHA256 sidecar files.
 
 on:
   push:
@@ -38,8 +29,8 @@ defaults:
     shell: msys2 {0}
 
 jobs:
-  build-and-sign:
-    name: build + sign + release
+  build-and-release:
+    name: build + release (unsigned)
     runs-on: windows-2022
 
     steps:
@@ -101,69 +92,13 @@ jobs:
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "tag=$tag"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Package unsigned ZIP
+      - name: Package ZIP
         shell: pwsh
         run: ./scripts/package.ps1 -Version '${{ steps.ver.outputs.version }}'
 
-      - name: Build unsigned MSI
+      - name: Build MSI
         shell: pwsh
         run: ./scripts/build-msi.ps1 -Version '${{ steps.ver.outputs.version }}'
-
-      - name: Upload unsigned ZIP for SignPath
-        id: upload-unsigned-zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: dhc-vpn-unsigned-zip
-          path: build/dhc-vpn-${{ steps.ver.outputs.version }}.zip
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload unsigned MSI for SignPath
-        id: upload-unsigned-msi
-        uses: actions/upload-artifact@v4
-        with:
-          name: dhc-vpn-unsigned-msi
-          path: build/dhc-vpn-${{ steps.ver.outputs.version }}.msi
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Submit ZIP to SignPath
-        id: signpath-zip
-        uses: signpath/github-action-submit-signing-request@v1
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: 'dhc-vpn-client'
-          signing-policy-slug: 'release-signing'
-          artifact-configuration-slug: 'zip-default'
-          github-artifact-id: ${{ steps.upload-unsigned-zip.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: 'build/signed'
-
-      - name: Submit MSI to SignPath
-        id: signpath-msi
-        uses: signpath/github-action-submit-signing-request@v1
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: 'dhc-vpn-client'
-          signing-policy-slug: 'release-signing'
-          artifact-configuration-slug: 'msi-default'
-          github-artifact-id: ${{ steps.upload-unsigned-msi.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: 'build/signed'
-
-      - name: Compute signed-artifact SHA256s
-        shell: pwsh
-        run: |
-          foreach ($pat in 'dhc-vpn-*.zip','dhc-vpn-*.msi') {
-              $f = Get-ChildItem "build/signed/$pat" | Select-Object -First 1
-              if (-not $f) { throw "signed artifact not found for pattern $pat" }
-              $hash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash
-              "$hash *$($f.Name)" | Set-Content "$($f.FullName).sha256" -Encoding ASCII
-              Write-Host "Signed: $($f.FullName)"
-              Write-Host "SHA256: $hash"
-          }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -173,7 +108,7 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            build/signed/dhc-vpn-*.zip
-            build/signed/dhc-vpn-*.zip.sha256
-            build/signed/dhc-vpn-*.msi
-            build/signed/dhc-vpn-*.msi.sha256
+            build/dhc-vpn-${{ steps.ver.outputs.version }}.zip
+            build/dhc-vpn-${{ steps.ver.outputs.version }}.zip.sha256
+            build/dhc-vpn-${{ steps.ver.outputs.version }}.msi
+            build/dhc-vpn-${{ steps.ver.outputs.version }}.msi.sha256

@@ -214,7 +214,7 @@
       action runs.
     -->
     <SetProperty Id="GrantSvcStart"
-                 Value='[SystemFolder]sc.exe sdset charon-svc &quot;D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;CCLCSWLOCRRPWP;;;AU)&quot;'
+                 Value='&quot;[System64Folder]sc.exe&quot; sdset charon-svc &quot;D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;CCLCSWLOCRRPWP;;;AU)&quot;'
                  Sequence="execute"
                  Before="GrantSvcStart"/>
     <CustomAction Id="GrantSvcStart"
