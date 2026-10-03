@@ -60,6 +60,9 @@ QString Profile::toConnectionBlock() const
     if (!remoteCertFile.isEmpty()) {
         s << "            certs = " << remoteCertFile << "\n";
     }
+    if (!caCertFile.isEmpty()) {
+        s << "            cacerts = " << caCertFile << "\n";
+    }
     s << "        }\n";
     s << "\n";
 
@@ -184,9 +187,13 @@ Profile Profile::load(const QString &swanctlDir, const QString &name, bool *ok)
         QRegularExpression idRx(R"(\bid\s*=\s*([^\n#]+))");
         auto m = idRx.match(remote);
         if (m.hasMatch()) p.remoteId = m.captured(1).trimmed();
-        QRegularExpression certsRx(R"(certs\s*=\s*([^\n#]+))");
+        // \b keeps "certs" from matching inside "cacerts".
+        QRegularExpression certsRx(R"(\bcerts\s*=\s*([^\n#]+))");
         auto m2 = certsRx.match(remote);
         if (m2.hasMatch()) p.remoteCertFile = m2.captured(1).trimmed();
+        QRegularExpression caRx(R"(\bcacerts\s*=\s*([^\n#]+))");
+        auto m3 = caRx.match(remote);
+        if (m3.hasMatch()) p.caCertFile = m3.captured(1).trimmed();
     }
 
     if (ok) *ok = !p.remoteAddr.isEmpty();
